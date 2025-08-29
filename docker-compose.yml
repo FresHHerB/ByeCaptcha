@@ -1,0 +1,14 @@
+# docker-compose.yml
+
+version: '3.8'
+
+services:
+  byecaptcha-api:
+    build: .
+    image: seu-usuario-github/byecaptcha-api:latest
+    container_name: byecaptcha-api
+    restart: unless-stopped
+    ports:
+      - "1910:1910"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY} # Lê a variável do ambiente do EasyPanel
