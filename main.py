@@ -98,10 +98,11 @@ async def transcribe_audio(file: UploadFile = File(...)) -> Dict[str, Any]:
         start_openai_time = time.perf_counter()
 
         # Envia o áudio para a API de transcrição da OpenAI
+        # CORREÇÃO: Usar response_format="json" em vez de "verbose_json"
         transcription_response = await client.audio.transcriptions.create(
             model="gpt-4o-mini-transcribe",
             file=(file.filename or "audio.wav", audio_content, file.content_type or "audio/wav"),
-            response_format="verbose_json"  # Para obter informações detalhadas
+            response_format="json"  # CORRIGIDO: json em vez de verbose_json
         )
 
         # Finaliza a contagem do tempo da chamada à API
@@ -115,7 +116,8 @@ async def transcribe_audio(file: UploadFile = File(...)) -> Dict[str, Any]:
         total_processing_time_ms = round((end_total_time - start_total_time) * 1000, 2)
 
         # Formatar resposta no formato solicitado
-        text_content = transcription_response.text
+        # Com response_format="json", a resposta será um objeto com .text
+        text_content = transcription_response.text if hasattr(transcription_response, 'text') else str(transcription_response)
         word_count = len(text_content.split()) if text_content else 0
         
         # Aproximação de tokens baseada no tamanho do arquivo e palavras
@@ -138,8 +140,10 @@ async def transcribe_audio(file: UploadFile = File(...)) -> Dict[str, Any]:
                 "total_processing_time_ms": total_processing_time_ms
             },
             "openai_response_details": {
-                "language": getattr(transcription_response, 'language', None),
-                "duration": getattr(transcription_response, 'duration', None)
+                # Com response_format="json", não temos language e duration
+                # Mas podemos incluir outras informações se disponíveis
+                "model_used": "gpt-4o-mini-transcribe",
+                "file_size_mb": round(file_size_mb, 2)
             }
         }
         
@@ -154,6 +158,8 @@ async def transcribe_audio(file: UploadFile = File(...)) -> Dict[str, Any]:
             raise HTTPException(status_code=429, detail="Rate limit excedido. Tente novamente em alguns minutos.")
         elif "timeout" in str(e).lower():
             raise HTTPException(status_code=504, detail="Timeout na requisição para OpenAI")
+        elif "response_format" in str(e).lower():
+            raise HTTPException(status_code=400, detail=f"Formato de resposta não suportado pelo modelo: {str(e)}")
         else:
             raise HTTPException(status_code=500, detail=f"Erro ao processar áudio: {str(e)}")
 
