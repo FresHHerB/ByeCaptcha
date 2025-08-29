@@ -1,7 +1,8 @@
 import time
 import os
-from typing import Dict, Any
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from typing import Dict, Any, Optional
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 import logging
@@ -20,14 +21,39 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# --- Configuração do Cliente OpenAI ---
-# A chave da API é lida da variável de ambiente, como solicitado para o EasyPanel.
+# --- Configuração das Chaves ---
 api_key = os.getenv("OPENAI_API_KEY")
+auth_key = os.getenv("AUTH_KEY")  # NOVA VARIÁVEL
+
 if not api_key:
     logger.error("OPENAI_API_KEY não configurada!")
     raise RuntimeError("A variável de ambiente OPENAI_API_KEY não foi definida.")
 
+if not auth_key:  # NOVA VALIDAÇÃO
+    logger.error("AUTH_KEY não configurada!")
+    raise RuntimeError("A variável de ambiente AUTH_KEY não foi definida.")
+
 client = AsyncOpenAI(api_key=api_key)
+
+# Setup para Bearer token
+security = HTTPBearer(auto_error=False)  # NOVO
+
+# --- Função de Autenticação ---
+def verify_bearer_token(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> str:
+    """Verifica o Bearer token"""
+    if not credentials:
+        raise HTTPException(
+            status_code=401, 
+            detail="Authorization header obrigatório"
+        )
+    
+    if credentials.credentials != auth_key:
+        raise HTTPException(
+            status_code=401, 
+            detail="Token de autorização inválido"
+        )
+    
+    return credentials.credentials
 
 # --- Endpoints ---
 @app.get("/")
@@ -36,7 +62,8 @@ async def root():
     return {
         "message": "byeCaptcha Audio Transcription API", 
         "status": "running",
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "auth_required": True  # NOVO CAMPO
     }
 
 @app.get("/health")
@@ -45,14 +72,21 @@ async def health_check():
     return {
         "status": "healthy", 
         "timestamp": time.time(),
-        "api_key_configured": bool(api_key)
+        "api_key_configured": bool(api_key),
+        "auth_key_configured": bool(auth_key)  # NOVO CAMPO
     }
 
 @app.post("/byeCaptcha")
-async def transcribe_audio(file: UploadFile = File(...)) -> Dict[str, Any]:
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    token: str = Depends(verify_bearer_token)  # NOVA DEPENDÊNCIA
+) -> Dict[str, Any]:
     """
     Recebe um arquivo de áudio, transcreve usando o modelo gpt-4o-mini-transcribe
     e retorna a resposta formatada com tempos de processamento.
+    
+    Headers obrigatórios:
+    - Authorization: Bearer sua_auth_key_aqui
     """
     # Inicia a contagem do tempo total de processamento do endpoint
     start_total_time = time.perf_counter()
@@ -92,7 +126,7 @@ async def transcribe_audio(file: UploadFile = File(...)) -> Dict[str, Any]:
                 detail=f"Arquivo muito grande ({file_size_mb:.1f}MB). Limite: 25MB"
             )
         
-        logger.info(f"Arquivo recebido: {file.filename}, Tamanho: {file_size_mb:.2f}MB")
+        logger.info(f"Arquivo autenticado recebido: {file.filename}, Tamanho: {file_size_mb:.2f}MB")  # ATUALIZADO LOG
 
         # Inicia a contagem do tempo da chamada à API da OpenAI
         start_openai_time = time.perf_counter()
@@ -144,15 +178,16 @@ async def transcribe_audio(file: UploadFile = File(...)) -> Dict[str, Any]:
                 # Mas podemos incluir outras informações se disponíveis
                 "model_used": "gpt-4o-mini-transcribe",
                 "file_size_mb": round(file_size_mb, 2)
-            }
+            },
+            "authenticated": True  # NOVO CAMPO
         }
         
-        logger.info(f"Transcrição concluída em {total_processing_time_ms}ms (OpenAI: {openai_processing_time_ms}ms)")
+        logger.info(f"Transcrição autenticada concluída em {total_processing_time_ms}ms (OpenAI: {openai_processing_time_ms}ms)")  # ATUALIZADO LOG
         
         return response_data
 
     except Exception as e:
-        logger.error(f"Erro durante transcrição: {str(e)}")
+        logger.error(f"Erro durante transcrição autenticada: {str(e)}")  # ATUALIZADO LOG
         # Em caso de erro com a API da OpenAI ou outro problema
         if "rate limit" in str(e).lower():
             raise HTTPException(status_code=429, detail="Rate limit excedido. Tente novamente em alguns minutos.")
