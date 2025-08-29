@@ -12,3 +12,4 @@ services:
       - "1910:1910"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY} # Lê a variável do ambiente do EasyPanel
+      - AUTH_KEY=${AUTH_KEY} # NOVA LINHA - Chave de autenticação
